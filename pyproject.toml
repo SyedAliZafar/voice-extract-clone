@@ -1,0 +1,15 @@
+[project]
+name = "voice-clone"
+version = "0.1.0"
+requires-python = ">=3.9, <3.12"
+dependencies = [
+    "TTS>=0.13.0",
+    "demucs",
+    "gradio",
+    "transformers==4.36.2",
+    "torch==2.4.0",
+    "torchaudio==2.4.0",
+]
+
+[project.scripts]
+voice-clone = "main:main"
