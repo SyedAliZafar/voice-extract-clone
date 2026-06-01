@@ -29,7 +29,7 @@ HAS_DEMUCS = demucs_available()
 HAS_FFMPEG = check_ffmpeg()
 
 
-# ── Existing backend functions (unchanged) ─────────────────────────────────────
+# ── Backend functions (unchanged) ─────────────────────────────────────────────
 def _ensure_dirs():
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
@@ -41,13 +41,11 @@ def run_mic(audio_input, text: str, language: str):
     text = text.strip() if text else ""
     if not text:
         return None, "Please enter the text you want to speak."
-
     _ensure_dirs()
     sample_rate, data = audio_input
     if data.ndim > 1:
         data = data[:, 0]
     wavfile.write(str(MIC_WAV), sample_rate, data.astype(np.int16))
-
     try:
         synthesize(MIC_WAV, text, OUTPUT, language)
         return str(OUTPUT), "Done — audio generated successfully."
@@ -61,11 +59,9 @@ def run_file(file_upload, isolate: bool, text: str, language: str):
     text = text.strip() if text else ""
     if not text:
         return None, "Please enter the text you want to speak."
-
     _ensure_dirs()
     upload_path = Path(file_upload)
     suffix = upload_path.suffix.lower()
-
     try:
         if suffix == ".mp4":
             if not HAS_FFMPEG:
@@ -77,727 +73,1015 @@ def run_file(file_upload, isolate: bool, text: str, language: str):
             ref = EXTRACTED
         else:
             return None, f"Unsupported file type: {suffix}. Please upload .mp4 or .wav."
-
         if isolate and HAS_DEMUCS:
             isolate_vocals(ref, ISOLATED)
             ref = ISOLATED
-
         synthesize(ref, text, OUTPUT, language)
         return str(OUTPUT), "Done — audio generated successfully."
     except Exception as exc:
         return None, f"Error: {exc}"
 
 
-# ── New helper functions ────────────────────────────────────────────────────────
-
-def _build_stats_html(audio_path, elapsed_seconds: float) -> str:
-    audio_len_str = "—"
-    if audio_path:
-        try:
-            sr, data = wavfile.read(str(audio_path))
-            duration = data.shape[0] / sr
-            audio_len_str = f"{duration:.1f}s"
-        except Exception:
-            pass
-    return f"""
-<div class="vc-stats-card">
-  <div class="vc-stat">
-    <span class="vc-stat-label">Gen Time</span>
-    <span class="vc-stat-value">{elapsed_seconds:.1f}s</span>
-  </div>
-  <div class="vc-stat">
-    <span class="vc-stat-label">Audio Length</span>
-    <span class="vc-stat-value">{audio_len_str}</span>
-  </div>
-  <div class="vc-stat">
-    <span class="vc-stat-label">Voice Match</span>
-    <span class="vc-stat-value">94%</span>
-  </div>
-</div>"""
+# ── UI helpers ─────────────────────────────────────────────────────────────────
+def _build_stats_html(audio_path, elapsed: float) -> str:
+    if not audio_path:
+        return ""
+    duration_str = "—"
+    try:
+        sr, data = wavfile.read(str(audio_path))
+        duration_str = f"{data.shape[0] / sr:.1f}s"
+    except Exception:
+        pass
+    return (
+        f'<div class="vc-gen-info">'
+        f'<span>Generated in {elapsed:.1f}s &middot; {duration_str} audio</span>'
+        f'</div>'
+    )
 
 
-def run_unified(mode: str, mic_input, file_input, isolate: bool, text: str, language: str):
+def run_unified(mic_input, file_input, isolate: bool, text: str, language: str):
     t0 = time.perf_counter()
-    if mode == "mic":
+    if mic_input is not None:
         audio_path, status = run_mic(mic_input, text, language)
-    else:
+    elif file_input is not None:
         audio_path, status = run_file(file_input, isolate, text, language)
+    else:
+        return None, "Please record your voice or upload an audio file.", ""
     elapsed = time.perf_counter() - t0
-    stats = _build_stats_html(audio_path, elapsed) if audio_path else ""
-    return audio_path, status, stats
+    return audio_path, status, _build_stats_html(audio_path, elapsed)
 
 
 def update_char_info(text: str) -> str:
     text = text or ""
-    count = len(text)
     words = len(text.split()) if text.strip() else 0
-    est_seconds = round(words / 2.5) if words > 0 else 0
+    est = round(words / 2.5) if words else 0
     return (
-        f'<div class="vc-char-info">'
-        f'<span class="vc-char-count">{count} chars</span>'
-        f'<span class="vc-char-sep"> · </span>'
-        f'<span class="vc-char-est">~{est_seconds}s speech</span>'
+        f'<div class="vc-meta">'
+        f'<span>{len(text)} chars</span>'
+        f'<span class="dot">&middot;</span>'
+        f'<span>~{est}s speech</span>'
         f'</div>'
     )
 
 
 def show_quality(value) -> str:
-    return QUALITY_WAITING_HTML if value is None else QUALITY_READY_HTML
+    return QUALITY_IDLE if value is None else QUALITY_READY
 
 
-def set_mode_mic():
-    return "mic"
-
-
-def set_mode_file():
-    return "file"
-
-
-# ── Data constants ─────────────────────────────────────────────────────────────
+# ── HTML fragments ─────────────────────────────────────────────────────────────
 LANG_CHOICES = [(name, code) for name, code in LANGUAGES]
 
-QUALITY_WAITING_HTML = """
-<div class="vc-quality-card vc-quality-waiting">
-  <div class="vc-quality-dot vc-quality-dot--idle"></div>
-  <div class="vc-quality-text">
-    <div class="vc-quality-title">Voice Sample Quality</div>
-    <div class="vc-quality-sub">Record or upload a sample to see analysis</div>
-  </div>
+QUALITY_IDLE = """
+<div class="vc-status-line">
+  <span class="vc-dot idle"></span>
+  <span>No voice sample loaded</span>
 </div>
 """
 
-QUALITY_READY_HTML = """
-<div class="vc-quality-card vc-quality-ready">
-  <div class="vc-quality-dot vc-quality-dot--good"></div>
-  <div class="vc-quality-text">
-    <div class="vc-quality-title">Sample Ready <span class="vc-quality-badge">Excellent</span></div>
-    <div class="vc-quality-sub">Clarity: <strong>Good</strong> &nbsp;&middot;&nbsp; Duration: <strong>Sufficient</strong> &nbsp;&middot;&nbsp; Noise: <strong>Low</strong></div>
-  </div>
+QUALITY_READY = """
+<div class="vc-status-line">
+  <span class="vc-dot ready"></span>
+  <span>Sample ready &mdash; good quality</span>
 </div>
 """
 
-HEADER_HTML = """
-<div class="vc-header">
-  <span class="vc-logo">VoiceClone AI</span>
-  <span class="vc-badge">Powered by XTTS v2</span>
-</div>
-"""
-
-HERO_HTML = """
-<div class="vc-hero">
-  <span class="vc-eyebrow">No account required &nbsp;&middot;&nbsp; No credit card &nbsp;&middot;&nbsp; Runs locally</span>
-  <h1 class="vc-headline">Clone Any<br><span>Voice in Seconds</span></h1>
-  <p class="vc-subline">
-    Upload a voice sample, type text, and generate realistic speech instantly.
-  </p>
-</div>
-"""
-
-FOOTER_HTML = """
-<div class="vc-footer">
-  Built with <a href="https://github.com/coqui-ai/TTS" target="_blank">Coqui XTTS v2</a>
-  &nbsp;&middot;&nbsp; Voice samples stay on your machine &mdash; nothing is uploaded
+# ── Result header HTML ──────────────────────────────────────────────────────────
+RESULT_HEADER = """
+<div class="vc-result-header">
+  <span class="vc-result-icon">&#10003;</span>
+  <span>
+    <div class="vc-result-title">Generated Audio</div>
+    <div class="vc-result-sub">Ready to play &amp; download</div>
+  </span>
 </div>
 """
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 CSS = """
-/* ── Variables ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ════ TOKENS ════ */
 :root {
-  --bg-base: #080c18;
-  --bg-card: rgba(255, 255, 255, 0.03);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-hover: rgba(108, 99, 255, 0.35);
-  --accent-purple: #6C63FF;
-  --accent-purple-dark: #5a52e8;
-  --accent-teal: #00D4AA;
-  --text-primary: #e2e8f0;
-  --text-muted: #8896aa;
-  --text-label: #6872a0;
-  --radius-card: 16px;
-  --radius-btn: 12px;
-  --shadow-purple: 0 4px 24px rgba(108, 99, 255, 0.35);
-  --shadow-purple-hover: 0 6px 32px rgba(108, 99, 255, 0.55);
-  --transition: 0.2s ease;
+  --bg:      #0d0d0f;
+  --s1:      #141416;
+  --s2:      #1c1c1f;
+  --s3:      #242428;
+  --border:  #2a2a2e;
+  --border2: #333338;
+  --accent:  #e8ff47;
+  --teal:    #3dffc0;
+  --red:     #ff4545;
+  --text:    #f2f2f0;
+  --t2:      #8a8a8f;
+  --t3:      #4a4a50;
+  --ff-ui:   'Inter', system-ui, sans-serif;
+  --ff-mono: 'JetBrains Mono', 'Courier New', monospace;
 }
 
-/* ── Reset & base ── */
+/* ════ RESET ════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-body, .gradio-container {
-  background: var(--bg-base) !important;
-  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-  color: var(--text-primary) !important;
+/* ════ CRITICAL GRADIO OVERRIDES ════ */
+.gradio-container, body {
+  background: var(--bg) !important;
+  font-family: var(--ff-ui) !important;
+  color: var(--text) !important;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.gradio-container .contain { padding: 0 !important; }
+.gradio-container > .main  { padding: 0 !important; }
+footer.svelte-mpyp5e, .footer { display: none !important; }
+
+#vc-left-panel .block,
+#vc-right-panel .block,
+#vc-results .block {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+#vc-left-panel .wrap,
+#vc-left-panel .form,
+#vc-left-panel .wrap-inner,
+#vc-right-panel .wrap,
+#vc-right-panel .form,
+#vc-results .wrap { padding: 0 !important; }
+
+#vc-left-panel label > span,
+#vc-right-panel label > span { display: none !important; }
+
+#vc-workspace > div { gap: 0 !important; }
+
+#vc-left-panel > .wrap {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 20px !important;
+  height: 100% !important;
+  gap: 0 !important;
+}
+#vc-right-panel > .wrap {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 20px 22px !important;
+  height: 100% !important;
+  gap: 0 !important;
+}
+#vc-results > .wrap { padding: 0 !important; gap: 0 !important; }
+
+#mic-audio-input audio { display: none !important; }
+#mic-audio-input .waveform-container,
+#mic-audio-input [class*="waveform"] {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
 }
 
-/* ── Header ── */
+*:focus { outline: none; }
+
+/* ════ ZONE 1 — NAV ════ */
 .vc-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 40px;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
+  height: 48px;
+  padding: 0 32px;
+  background: var(--s1);
+  border-bottom: 1px solid var(--border);
 }
 .vc-logo {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  background: linear-gradient(90deg, var(--accent-purple), var(--accent-teal));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.vc-badge {
-  font-size: 0.7rem;
+  font-family: var(--ff-ui);
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-teal);
-  border: 1px solid rgba(0, 212, 170, 0.35);
-  padding: 4px 10px;
-  border-radius: 20px;
-  background: rgba(0, 212, 170, 0.08);
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
+.vc-logo .clone { color: var(--accent); }
+.vc-nav-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vc-nav-pills span {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+}
+.vc-nav-pills .pill-xtts {
+  color: var(--teal);
+  background: rgba(61,255,192,0.07);
+  border-color: rgba(61,255,192,0.2);
+}
+.vc-nav-pills .pill-dim { color: var(--t3); }
 
-/* ── Hero ── */
+/* ════ ZONE 2 — HERO ════ */
 .vc-hero {
-  text-align: center;
-  padding: 60px 24px 44px;
-  background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(108, 99, 255, 0.18) 0%, transparent 70%);
   position: relative;
+  text-align: center;
+  padding: 36px 24px 28px;
+  background: var(--s1);
   overflow: hidden;
 }
-.vc-hero::before {
-  content: '';
+.vc-hero-tint {
   position: absolute;
   inset: 0;
-  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%236C63FF' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
   pointer-events: none;
+  background: radial-gradient(ellipse 60% 80% at 50% -20%, rgba(232,255,71,0.04) 0%, transparent 70%);
 }
-.vc-eyebrow {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent-purple);
+.vc-hero-body { position: relative; z-index: 1; }
+
+.vc-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(232,255,71,0.06);
+  border: 1px solid rgba(232,255,71,0.18);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t2);
   margin-bottom: 16px;
-  display: block;
 }
+.vc-chip-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  flex-shrink: 0;
+}
+
 .vc-headline {
-  font-size: clamp(2.2rem, 5vw, 3.6rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-family: var(--ff-ui);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
   line-height: 1.1;
-  background: linear-gradient(135deg, #ffffff 0%, #a8b8d8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin-bottom: 18px;
+  color: var(--text);
+  margin-bottom: 10px;
 }
-.vc-headline span {
-  background: linear-gradient(90deg, var(--accent-purple), var(--accent-teal));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
+.vc-headline .voice-word { color: var(--accent); }
+
 .vc-subline {
-  font-size: 1.05rem;
-  color: var(--text-muted);
-  max-width: 480px;
-  margin: 0 auto;
+  font-family: var(--ff-ui);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--t2);
+  max-width: 360px;
+  margin: 0 auto 16px;
   line-height: 1.6;
 }
 
-/* ── App wrapper ── */
+.vc-hero-pills {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.vc-hero-pills span {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+  border: 1px solid var(--border2);
+  padding: 3px 8px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.015);
+}
+
+/* Wave — 9 bars */
+.vc-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.vc-wave span {
+  display: inline-block;
+  width: 2.5px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.3;
+  animation: wv 1.4s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+.vc-wave span:nth-child(1) { height:  6px; animation-delay: 0.0s; }
+.vc-wave span:nth-child(2) { height: 11px; animation-delay: 0.1s; }
+.vc-wave span:nth-child(3) { height: 18px; animation-delay: 0.2s; }
+.vc-wave span:nth-child(4) { height: 24px; animation-delay: 0.3s; }
+.vc-wave span:nth-child(5) { height: 28px; animation-delay: 0.4s; }
+.vc-wave span:nth-child(6) { height: 24px; animation-delay: 0.5s; }
+.vc-wave span:nth-child(7) { height: 18px; animation-delay: 0.6s; }
+.vc-wave span:nth-child(8) { height: 11px; animation-delay: 0.7s; }
+.vc-wave span:nth-child(9) { height:  6px; animation-delay: 0.8s; }
+@keyframes wv {
+  0%, 100% { transform: scaleY(0.3);  opacity: 0.15; }
+  50%       { transform: scaleY(1.0);  opacity: 0.60; }
+}
+
+/* ════ APP WRAPPER ════ */
 #vc-app-wrapper {
-  max-width: 1120px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 0 24px 80px;
+  padding: 0 0 80px;
 }
 #vc-app-wrapper > .wrap { padding: 0 !important; }
 
-/* ── 2-column layout ── */
-#vc-app-grid {
-  gap: 24px !important;
-  align-items: start !important;
-}
-#vc-app-grid > * {
-  flex: 1 1 0 !important;
-  min-width: 0 !important;
-}
-@media (max-width: 768px) {
-  #vc-app-grid { flex-direction: column !important; }
-  #vc-app-grid > * { width: 100% !important; flex: none !important; }
+/* ════ ZONE 3 — WORKSPACE ════ */
+#vc-workspace {
+  display: flex !important;
+  min-height: 440px !important;
+  gap: 0 !important;
+  align-items: stretch !important;
+  border-top: 1px solid var(--border) !important;
+  border-bottom: 1px solid var(--border) !important;
+  overflow: visible !important;
+  margin-bottom: 0 !important;
 }
 
-/* ── Section labels ── */
-.vc-section-label {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-label);
+/* ── LEFT PANEL ── */
+#vc-left-panel {
+  border-right: 1px solid var(--border) !important;
+  flex: 0 0 36% !important;
+  max-width: 36% !important;
+}
+
+/* Section headers */
+.vc-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-bottom: 10px;
-  padding-left: 2px;
+}
+.vc-sec-title {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.vc-sec-hint {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+  margin-left: auto;
+}
+.vc-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  border-radius: 50%;
+  font-family: var(--ff-mono);
+  font-size: 9px;
+  font-weight: 600;
+  background: rgba(232,255,71,0.1);
+  border: 1px solid rgba(232,255,71,0.22);
+  color: var(--accent);
+}
+.vc-step-num.step-rec {
+  background: rgba(255,69,69,0.1);
+  border-color: rgba(255,69,69,0.25);
+  color: var(--red);
+}
+.vc-step-num.step-2 {
+  background: rgba(61,255,192,0.08);
+  border-color: rgba(61,255,192,0.2);
+  color: var(--teal);
 }
 
-/* ── Cards ── */
-.vc-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  padding: 24px;
-  margin-bottom: 12px;
-  transition: border-color var(--transition);
+/* Right-panel section header same pattern */
+.vc-right-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
 }
-.vc-card:hover { border-color: var(--border-hover); }
-.vc-card > div,
-.vc-mic-card > div,
-.vc-output-section > div {
+
+/* Upload zone */
+#file-upload-input { margin-bottom: 0 !important; }
+#file-upload-input .upload-container,
+#file-upload-input [data-testid="upload-zone"] {
+  background: rgba(255,255,255,0.015) !important;
+  border: 1.5px dashed var(--border2) !important;
+  border-radius: 10px !important;
+  padding: 20px 14px !important;
+  text-align: center !important;
+  cursor: pointer !important;
+  transition: border-color 0.2s, background 0.2s !important;
+}
+#file-upload-input .upload-container:hover,
+#file-upload-input [data-testid="upload-zone"]:hover {
+  border-color: rgba(232,255,71,0.22) !important;
+  background: rgba(232,255,71,0.04) !important;
+}
+#file-upload-input .upload-container span,
+#file-upload-input [data-testid="upload-zone"] span {
+  font-family: var(--ff-mono) !important;
+  font-size: 10px !important;
+  color: var(--t3) !important;
+}
+
+/* Isolate checkbox */
+#isolate-chk { margin-bottom: 14px !important; }
+#isolate-chk label {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 7px !important;
+  padding: 8px 10px !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--s2) !important;
+  cursor: pointer !important;
+}
+#isolate-chk label span {
+  display: inline !important;
+  font-family: var(--ff-ui) !important;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+  color: var(--t2) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+#isolate-chk .recommended-tag {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+  margin-left: auto;
+}
+input[type="checkbox"] { accent-color: var(--accent); }
+
+/* OR separator */
+.vc-or-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 16px;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+  user-select: none;
+}
+.vc-or-sep::before, .vc-or-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Mic container */
+#mic-audio-input {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  padding: 12px 0 !important;
+}
+#mic-audio-input > .wrap,
+#mic-audio-input .block {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  width: 100% !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* ── RECORD BUTTON (confirmed class selectors) ── */
+#mic-audio-input button.record.record-button {
+  width: 64px !important;
+  height: 64px !important;
+  border-radius: 50% !important;
+  background: rgba(255,69,69,0.1) !important;
+  border: 2px solid rgba(255,69,69,0.3) !important;
+  color: var(--red) !important;
+  margin: 0 auto !important;
+  cursor: pointer !important;
+  position: relative !important;
+  font-size: 0 !important;
+  flex-shrink: 0 !important;
+}
+#mic-audio-input button.record.record-button::after {
+  content: '' !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 50% !important;
+  background: var(--red) !important;
+}
+#mic-audio-input button.record.record-button::before {
+  content: '' !important;
+  position: absolute !important;
+  inset: -6px !important;
+  border-radius: 50% !important;
+  border: 1.5px solid rgba(255,69,69,0.15) !important;
+  animation: rec-pulse 2.2s ease-in-out infinite !important;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0; transform: scale(1.35); }
+}
+
+#mic-audio-input button.pause-button {
+  width: 64px !important;
+  height: 64px !important;
+  border-radius: 50% !important;
+  background: rgba(255,69,69,0.15) !important;
+  border: 2px solid rgba(255,69,69,0.4) !important;
+  margin: 0 auto !important;
+  cursor: pointer !important;
+}
+#mic-audio-input button.pause-button svg {
+  fill: var(--red) !important;
+  stroke: var(--red) !important;
+  width: 22px !important;
+  height: 22px !important;
+}
+
+.vc-mic-hint {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Status line */
+.vc-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 14px;
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  font-family: var(--ff-ui);
+  font-size: 11px;
+  color: var(--t3);
+}
+.vc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.vc-dot.idle  { background: var(--t3); }
+.vc-dot.ready {
+  background: var(--teal);
+  box-shadow: 0 0 6px rgba(61,255,192,0.5);
+  animation: blink 2s ease-in-out infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* Clone status textbox */
+.vc-clone-status {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-family: var(--ff-mono) !important;
+  font-size: 10px !important;
+  color: var(--t3) !important;
+  resize: none !important;
+  outline: none !important;
+  min-height: unset !important;
+  line-height: 1.55 !important;
+}
+.vc-clone-status:focus { box-shadow: none !important; }
+
+/* ── RIGHT PANEL ── */
+#vc-right-panel { flex: 1 !important; }
+
+#script-text-input { margin-bottom: 14px !important; }
+#script-text-input > .wrap,
+#script-text-input label,
+#script-text-input .wrap-inner {
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
 }
-
-/* ── Quality card ── */
-.vc-quality-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  padding: 16px 20px;
-  margin-top: 4px;
-  transition: border-color var(--transition), background var(--transition);
-}
-.vc-quality-ready {
-  border-color: rgba(0, 212, 170, 0.25);
-  background: rgba(0, 212, 170, 0.04);
-}
-.vc-quality-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.vc-quality-dot--idle {
-  background: rgba(255, 255, 255, 0.18);
-}
-.vc-quality-dot--good {
-  background: var(--accent-teal);
-  box-shadow: 0 0 8px rgba(0, 212, 170, 0.6);
-  animation: vc-pulse 2s ease-in-out infinite;
-}
-@keyframes vc-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(0, 212, 170, 0.6); }
-  50% { box-shadow: 0 0 16px rgba(0, 212, 170, 0.9); }
-}
-.vc-quality-title {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 3px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  line-height: 1;
-}
-.vc-quality-badge {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent-teal);
-  border: 1px solid rgba(0, 212, 170, 0.3);
-  padding: 2px 7px;
-  border-radius: 10px;
-  background: rgba(0, 212, 170, 0.08);
-}
-.vc-quality-sub {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-.vc-quality-sub strong { color: var(--text-primary); font-weight: 600; }
-.vc-quality-waiting .vc-quality-title { color: var(--text-muted); }
-
-/* ── Character info ── */
-.vc-char-info {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  font-size: 0.76rem;
-  color: var(--text-muted);
-  padding: 6px 2px 0;
-}
-.vc-char-sep { opacity: 0.35; }
-
-/* ── Tab overrides ── */
-.tab-nav {
-  background: rgba(255, 255, 255, 0.03) !important;
-  border: 1px solid var(--border-subtle) !important;
-  border-radius: 14px !important;
-  padding: 5px !important;
-  gap: 4px !important;
-  margin-bottom: 16px !important;
-}
-.tab-nav button {
+#script-text-input textarea {
+  flex: 1 !important;
+  min-height: 220px !important;
+  max-height: 320px !important;
+  resize: vertical !important;
+  background: rgba(5,5,8,0.6) !important;
+  border: 1px solid var(--border) !important;
   border-radius: 10px !important;
-  font-weight: 600 !important;
-  font-size: 0.88rem !important;
-  letter-spacing: 0.01em !important;
-  padding: 10px 22px !important;
-  color: var(--text-muted) !important;
-  border: none !important;
-  background: transparent !important;
-  transition: all var(--transition) !important;
-}
-.tab-nav button.selected,
-.tab-nav button[aria-selected="true"] {
-  background: linear-gradient(135deg, var(--accent-purple), var(--accent-purple-dark)) !important;
-  color: #ffffff !important;
-  box-shadow: 0 4px 20px rgba(108, 99, 255, 0.4) !important;
-}
-
-/* ── Input field overrides ── */
-label > span, .block > label > span {
-  font-size: 0.78rem !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.05em !important;
-  text-transform: uppercase !important;
-  color: var(--text-label) !important;
-  margin-bottom: 8px !important;
-}
-textarea, input[type="text"], select, .gr-input {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid var(--border-subtle) !important;
-  border-radius: 10px !important;
-  color: var(--text-primary) !important;
-  font-size: 0.95rem !important;
-}
-textarea:focus, input[type="text"]:focus {
-  border-color: var(--accent-purple) !important;
-  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.15) !important;
-}
-
-/* ── Primary button ── */
-.vc-btn-primary button {
-  background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-purple-dark) 100%) !important;
-  border: none !important;
-  border-radius: var(--radius-btn) !important;
-  color: #ffffff !important;
-  font-weight: 700 !important;
-  font-size: 1rem !important;
-  letter-spacing: 0.02em !important;
-  padding: 14px 36px !important;
+  padding: 14px 16px !important;
+  font-family: var(--ff-ui) !important;
+  font-size: 13px !important;
+  line-height: 1.7 !important;
+  color: var(--text) !important;
+  caret-color: var(--accent) !important;
+  outline: none !important;
   width: 100% !important;
+}
+#script-text-input textarea::placeholder { color: var(--t3) !important; }
+#script-text-input textarea:focus {
+  border-color: rgba(232,255,71,0.3) !important;
+  box-shadow: 0 0 0 3px rgba(232,255,71,0.06) !important;
+  outline: none !important;
+}
+#script-text-input label > span { display: none !important; }
+
+/* Script footer */
+#vc-script-footer {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 10px !important;
+  align-items: center !important;
+  padding-top: 12px !important;
+  border-top: 1px solid var(--border) !important;
+  flex-wrap: nowrap !important;
+}
+#char-info   { flex: 1 1 auto !important; min-width: 0 !important; }
+#lang-select { flex: 0 0 auto !important; min-width: 120px !important; }
+#gen-btn     { flex: 0 0 auto !important; }
+
+.vc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
+}
+.vc-meta .dot { color: var(--t2); font-weight: 500; opacity: 0.6; }
+.vc-meta span { color: var(--t2); font-weight: 500; }
+
+/* Language dropdown */
+#lang-select label > span { display: none !important; }
+#lang-select select,
+#lang-select .wrap-inner,
+#lang-select [class*="dropdown"] {
+  background: var(--s2) !important;
+  border: 1px solid var(--border2) !important;
+  border-radius: 8px !important;
+  padding: 7px 10px !important;
+  font-family: var(--ff-ui) !important;
+  font-size: 11px !important;
+  color: var(--t2) !important;
   cursor: pointer !important;
-  transition: all var(--transition) !important;
-  box-shadow: var(--shadow-purple) !important;
-  margin-top: 4px !important;
+}
+
+/* Generate button */
+#gen-btn button {
+  background: var(--accent) !important;
+  color: #0a0a0a !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 9px 22px !important;
+  font-family: var(--ff-ui) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  transition: opacity 0.15s, transform 0.15s !important;
   position: relative !important;
   overflow: hidden !important;
 }
-.vc-btn-primary button:hover {
-  background: linear-gradient(135deg, #7C73FF 0%, var(--accent-purple) 100%) !important;
-  box-shadow: var(--shadow-purple-hover) !important;
-  transform: translateY(-1px) !important;
-}
-.vc-btn-primary button:active { transform: translateY(0) !important; }
+#gen-btn button:hover  { opacity: 0.9 !important; transform: translateY(-1px) !important; }
+#gen-btn button:active { transform: translateY(0) !important; }
 
-/* ── Button loading state ── */
-.vc-btn-primary button.vc-btn-loading {
+#gen-btn button.vc-btn-loading {
+  opacity: 0.5 !important;
   pointer-events: none !important;
-  opacity: 0.72 !important;
 }
-.vc-btn-primary button.vc-btn-loading::after {
+#gen-btn button.vc-btn-loading::after {
   content: '' !important;
   position: absolute !important;
-  right: 18px !important;
+  right: 14px !important;
   top: 50% !important;
   transform: translateY(-50%) !important;
-  width: 17px !important;
-  height: 17px !important;
-  border: 2px solid rgba(255, 255, 255, 0.3) !important;
-  border-top-color: #fff !important;
+  width: 13px !important;
+  height: 13px !important;
+  border: 2px solid rgba(0,0,0,0.2) !important;
+  border-top-color: #0a0a0a !important;
   border-radius: 50% !important;
-  animation: vc-spin 0.75s linear infinite !important;
+  animation: vc-spin 0.7s linear infinite !important;
 }
-@keyframes vc-spin {
-  to { transform: translateY(-50%) rotate(360deg); }
+@keyframes vc-spin { to { transform: translateY(-50%) rotate(360deg); } }
+
+/* ════ ZONE 4 — RESULTS ════ */
+#vc-results {
+  background: var(--s1) !important;
+  border-top: 1px solid var(--border) !important;
+  padding: 16px 20px !important;
+  gap: 0 !important;
 }
 
-/* ── Output section ── */
-.vc-output-section {
-  background: rgba(0, 212, 170, 0.03);
-  border: 1px solid rgba(0, 212, 170, 0.12);
-  border-radius: var(--radius-card);
-  padding: 28px;
-  margin-top: 8px;
-}
-
-/* ── Generation stats ── */
-.vc-stats-card {
+.vc-result-header {
   display: flex;
-  gap: 28px;
-  flex-wrap: wrap;
-  padding: 20px 24px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
   align-items: center;
-  height: fit-content;
-  align-self: center;
+  gap: 10px;
+  margin-bottom: 12px;
 }
-.vc-stat { display: flex; flex-direction: column; gap: 4px; }
-.vc-stat-label {
-  font-size: 0.67rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
+.vc-result-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: rgba(61,255,192,0.07);
+  border: 1px solid rgba(61,255,192,0.2);
+  color: var(--teal);
+  font-size: 14px;
+  flex-shrink: 0;
 }
-.vc-stat-value {
-  font-size: 1.5rem;
-  font-weight: 800;
-  color: var(--accent-teal);
-  letter-spacing: -0.02em;
+.vc-result-title {
+  font-family: var(--ff-ui);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
 }
-
-/* ── Status box ── */
-.vc-status {
-  font-size: 0.88rem !important;
-  font-weight: 500 !important;
-  border-radius: 8px !important;
-  border: none !important;
-  background: rgba(255, 255, 255, 0.04) !important;
-  color: var(--text-muted) !important;
-  padding: 10px 14px !important;
-  margin-top: 16px !important;
+.vc-result-sub {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
 }
 
-/* ── Audio component ── */
-.waveform-container, audio {
-  background: rgba(255, 255, 255, 0.04) !important;
+#audio-output audio { width: 100% !important; }
+#audio-output .waveform-container {
+  border: 1px solid var(--border) !important;
   border-radius: 10px !important;
-  border: 1px solid var(--border-subtle) !important;
+  background: rgba(5,5,8,0.5) !important;
+  padding: 12px 14px !important;
 }
 
-/* ── Divider ── */
-.vc-divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-subtle), transparent);
-  margin: 28px 0;
+.vc-gen-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
 }
 
-/* ── File upload area ── */
-.upload-container, .file-preview {
-  background: var(--bg-card) !important;
-  border: 2px dashed rgba(108, 99, 255, 0.3) !important;
-  border-radius: 12px !important;
-  transition: border-color var(--transition) !important;
-}
-.upload-container:hover {
-  border-color: rgba(108, 99, 255, 0.6) !important;
-  background: rgba(108, 99, 255, 0.05) !important;
-}
-
-/* ── Microphone record button ── */
-.vc-mic-card [data-testid="waveform-record-button"],
-.vc-mic-card button.record,
-.vc-mic-card button[aria-label*="ecord"],
-.vc-mic-card button[aria-label*="top"] {
-  background: linear-gradient(135deg, var(--accent-purple), var(--accent-purple-dark)) !important;
-  border: none !important;
-  border-radius: 50% !important;
-  width: 64px !important;
-  height: 64px !important;
-  min-width: 64px !important;
-  color: #fff !important;
-  cursor: pointer !important;
-  box-shadow: 0 4px 20px rgba(108, 99, 255, 0.5) !important;
-  transition: transform 0.15s, box-shadow 0.15s !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-.vc-mic-card button[aria-label*="ecord"]:hover,
-.vc-mic-card button[aria-label*="top"]:hover {
-  transform: scale(1.08) !important;
-  box-shadow: 0 6px 28px rgba(108, 99, 255, 0.7) !important;
-}
-.vc-mic-card button[aria-label*="ecord"] svg,
-.vc-mic-card button[aria-label*="top"] svg {
-  width: 26px !important;
-  height: 26px !important;
-  fill: #fff !important;
-  stroke: #fff !important;
-}
-
-/* ── Checkbox ── */
-input[type="checkbox"]:checked { accent-color: var(--accent-purple); }
-
-/* ── Footer ── */
+/* ════ ZONE 5 — FOOTER ════ */
 .vc-footer {
   text-align: center;
-  padding: 32px 24px;
-  color: #3d4a5c;
-  font-size: 0.8rem;
-  border-top: 1px solid var(--border-subtle);
+  padding: 24px;
+  border-top: 1px solid var(--border);
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  color: var(--t3);
 }
-.vc-footer a { color: var(--accent-purple); text-decoration: none; }
-.vc-footer a:hover { color: var(--accent-teal); }
+.vc-footer a { color: var(--t2); text-decoration: none; }
+.vc-footer a:hover { color: var(--text); }
 
-/* ── Hide Gradio default footer ── */
-footer { display: none !important; }
+/* ════ GLOBAL INPUT ════ */
+input[type="text"] {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+/* ════ MOBILE ════ */
+@media (max-width: 760px) {
+  #vc-workspace {
+    flex-direction: column !important;
+    min-height: unset !important;
+  }
+  #vc-left-panel {
+    flex: unset !important;
+    max-width: 100% !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+  #vc-script-footer { flex-wrap: wrap !important; }
+  #char-info { width: 100% !important; }
+  #lang-select { flex: 1 1 auto !important; }
+}
 """
 
-# ── JavaScript ────────────────────────────────────────────────────────────────
+# ── JavaScript ─────────────────────────────────────────────────────────────────
 JS = """
 function() {
-    function setupLoadingState() {
-        var genBtnWrap = document.getElementById('gen-btn');
-        if (!genBtnWrap) { setTimeout(setupLoadingState, 500); return; }
-        var btn = genBtnWrap.querySelector('button') || genBtnWrap;
-        btn.addEventListener('click', function() {
-            btn.classList.add('vc-btn-loading');
-        });
-        var audioOut = document.getElementById('audio-output');
-        if (audioOut) {
-            new MutationObserver(function() {
-                btn.classList.remove('vc-btn-loading');
-            }).observe(audioOut, { childList: true, subtree: true });
-        }
+  function setup() {
+    var wrap = document.getElementById('gen-btn');
+    if (!wrap) { setTimeout(setup, 500); return; }
+    var btn = wrap.querySelector('button') || wrap;
+    btn.addEventListener('click', function() {
+      btn.classList.add('vc-btn-loading');
+    });
+    var out = document.getElementById('audio-output');
+    if (out) {
+      new MutationObserver(function() {
+        btn.classList.remove('vc-btn-loading');
+      }).observe(out, { childList: true, subtree: true });
     }
-    setupLoadingState();
+  }
+  setup();
 }
 """
 
-# ── Gradio layout ─────────────────────────────────────────────────────────────
-with gr.Blocks(title="VoiceClone AI — Free AI Voice Cloning", css=CSS, js=JS, theme=gr.themes.Base()) as demo:
+# ── Gradio layout ──────────────────────────────────────────────────────────────
+with gr.Blocks(
+    title="VoiceClone AI — Free AI Voice Cloning",
+    css=CSS,
+    js=JS,
+    theme=gr.themes.Base(),
+) as demo:
 
-    gr.HTML(HEADER_HTML)
-    gr.HTML(HERO_HTML)
+    gr.HTML("""
+    <div class="vc-header">
+      <span class="vc-logo">Voice<span class="clone">Clone</span> AI</span>
+      <div class="vc-nav-pills">
+        <span class="pill-xtts">XTTS v2</span>
+        <span class="pill-dim">GPU</span>
+        <span class="pill-dim">v1.0</span>
+      </div>
+    </div>
+    """)
+
+    gr.HTML("""
+    <div class="vc-hero">
+      <div class="vc-hero-tint"></div>
+      <div class="vc-hero-body">
+        <div class="vc-hero-chip">
+          <span class="vc-chip-dot"></span>AI Voice Cloning
+        </div>
+        <h1 class="vc-headline">Clone Any <span class="voice-word">Voice</span><br>in Seconds</h1>
+        <p class="vc-subline">Upload a voice sample, type your script, and hear it spoken back in your cloned voice &mdash; instantly.</p>
+        <div class="vc-hero-pills">
+          <span>16 Languages</span>
+          <span>Runs Locally</span>
+          <span>GPU Accelerated</span>
+          <span>No Account Needed</span>
+        </div>
+        <div class="vc-wave">
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+    """)
 
     with gr.Column(elem_id="vc-app-wrapper"):
 
-        with gr.Row(elem_id="vc-app-grid"):
+        # ── Single workspace container ────────────────────────────────────────
+        with gr.Row(elem_id="vc-workspace"):
 
-            # ── Left Column: Voice Input ───────────────────────────────────
-            with gr.Column(elem_id="vc-left-col"):
-                gr.HTML('<span class="vc-section-label">Voice Input</span>')
+            # ── LEFT PANEL (30%) ──────────────────────────────────────────────
+            with gr.Column(scale=3, min_width=260, elem_id="vc-left-panel"):
 
-                with gr.Tabs(elem_id="vc-input-tabs") as input_tabs:
+                gr.HTML("""
+                <div class="vc-sec-head">
+                  <span class="vc-step-num">1</span>
+                  <span class="vc-sec-title">Upload Audio</span>
+                  <span class="vc-sec-hint">MP4 or WAV</span>
+                </div>
+                """)
 
-                    with gr.Tab("  Record  ") as tab_mic:
-                        with gr.Group(elem_classes="vc-card vc-mic-card"):
-                            mic_audio = gr.Audio(
-                                sources=["microphone"],
-                                type="numpy",
-                                label="Record Your Voice  (6–30 seconds for best results)",
-                                waveform_options={
-                                    "waveform_color": "#6C63FF",
-                                    "waveform_progress_color": "#00D4AA",
-                                },
-                                elem_id="mic-audio-input",
-                            )
+                # Upload zone
+                file_upload = gr.File(
+                    show_label=False,
+                    file_types=[".mp4", ".wav"],
+                    elem_id="file-upload-input",
+                )
 
-                    with gr.Tab("  Upload File  ") as tab_file:
-                        with gr.Group(elem_classes="vc-card"):
-                            file_upload = gr.File(
-                                label="Upload MP4 or WAV File",
-                                file_types=[".mp4", ".wav"],
-                                elem_id="file-upload-input",
-                            )
-                            if HAS_DEMUCS:
-                                isolate_chk = gr.Checkbox(
-                                    label="Isolate vocals (remove background music/noise)",
-                                    value=False,
-                                    elem_id="isolate-chk",
-                                )
-                            else:
-                                isolate_chk = gr.Checkbox(
-                                    label="Isolate vocals (install demucs to enable)",
-                                    value=False,
-                                    interactive=False,
-                                    elem_id="isolate-chk",
-                                )
-
-                quality_card = gr.HTML(QUALITY_WAITING_HTML, elem_id="quality-card")
-
-            # ── Right Column: Script + Generate ───────────────────────────
-            with gr.Column(elem_id="vc-right-col"):
-                gr.HTML('<span class="vc-section-label">Your Script</span>')
-
-                with gr.Group(elem_classes="vc-card", elem_id="script-card"):
-                    script_text = gr.Textbox(
-                        label="Text to Synthesize",
-                        lines=7,
-                        placeholder='"Hello, this is my cloned voice speaking."',
-                        elem_id="script-text-input",
+                if HAS_DEMUCS:
+                    isolate_chk = gr.Checkbox(
+                        label="Isolate vocals",
+                        value=False,
+                        elem_id="isolate-chk",
                     )
+                else:
+                    isolate_chk = gr.Checkbox(
+                        label="Isolate vocals",
+                        value=False,
+                        interactive=False,
+                        elem_id="isolate-chk",
+                    )
+
+                # "or" divider
+                gr.HTML('<div class="vc-or-sep"><span>or</span></div>')
+
+                # Record section — button centered, red
+                gr.HTML("""
+                <div class="vc-sec-head">
+                  <span class="vc-step-num step-rec">&#9679;</span>
+                  <span class="vc-sec-title">Record Voice</span>
+                  <span class="vc-sec-hint">6&ndash;30 sec</span>
+                </div>
+                """)
+                mic_audio = gr.Audio(
+                    sources=["microphone"],
+                    type="numpy",
+                    show_label=False,
+                    elem_id="mic-audio-input",
+                    waveform_options={
+                        "waveform_color": "#3dffc0",
+                        "waveform_progress_color": "#e8ff47",
+                    },
+                )
+
+                gr.HTML('<p class="vc-mic-hint">6&ndash;30 sec for best quality</p>')
+
+                # Voice quality indicator
+                quality_card = gr.HTML(QUALITY_IDLE, elem_id="quality-card")
+
+                # Clone status
+                status_box = gr.Textbox(
+                    show_label=False,
+                    interactive=False,
+                    placeholder="Ready to generate",
+                    elem_classes="vc-clone-status",
+                    elem_id="status-box",
+                )
+
+            # ── RIGHT PANEL (65%) ─────────────────────────────────────────────
+            with gr.Column(scale=7, elem_id="vc-right-panel"):
+
+                gr.HTML("""
+                <div class="vc-right-header">
+                  <span class="vc-step-num step-2">2</span>
+                  <span class="vc-sec-title">Your Script</span>
+                  <span class="vc-sec-hint">Type what to say</span>
+                </div>
+                """)
+
+                script_text = gr.Textbox(
+                    placeholder="Type what you want spoken in your voice...",
+                    lines=10,
+                    max_lines=30,
+                    show_label=False,
+                    elem_id="script-text-input",
+                )
+
+                # Footer bar: meta | language | generate
+                with gr.Row(elem_id="vc-script-footer"):
                     char_info = gr.HTML(
-                        '<div class="vc-char-info">'
-                        '<span class="vc-char-count">0 chars</span>'
-                        '<span class="vc-char-sep"> · </span>'
-                        '<span class="vc-char-est">~0s speech</span>'
+                        '<div class="vc-meta">'
+                        '<span>0 chars</span>'
+                        '<span class="dot">&middot;</span>'
+                        '<span>~0s speech</span>'
                         '</div>',
                         elem_id="char-info",
                     )
+                    lang_select = gr.Dropdown(
+                        choices=LANG_CHOICES,
+                        value="en",
+                        show_label=False,
+                        interactive=True,
+                        elem_id="lang-select",
+                    )
+                    gen_btn = gr.Button(
+                        "Generate",
+                        elem_id="gen-btn",
+                    )
 
-                lang_select = gr.Dropdown(
-                    choices=LANG_CHOICES,
-                    value="en",
-                    label="Language",
-                    interactive=True,
-                    elem_id="lang-select",
-                )
-
-                gen_btn = gr.Button(
-                    "Generate Speech",
-                    elem_classes="vc-btn-primary",
-                    elem_id="gen-btn",
-                )
-
-        # ── Results Section ────────────────────────────────────────────────
-        gr.HTML('<div class="vc-divider"></div>')
-
-        with gr.Group(elem_classes="vc-output-section", elem_id="output-section"):
-            with gr.Row():
-                audio_out = gr.Audio(
-                    label="Generated Audio",
-                    type="filepath",
-                    elem_id="audio-output",
-                )
-                stats_html = gr.HTML("", elem_id="gen-stats")
-            status_box = gr.Textbox(
-                label="Status",
-                interactive=False,
-                elem_classes="vc-status",
-                placeholder="Output will appear here after generation...",
-                elem_id="status-box",
+        # ── Results (below workspace) ─────────────────────────────────────────
+        with gr.Column(elem_id="vc-results"):
+            gr.HTML(RESULT_HEADER)
+            audio_out = gr.Audio(
+                type="filepath",
+                show_label=False,
+                elem_id="audio-output",
             )
+            stats_html = gr.HTML("", elem_id="gen-stats")
 
-    active_mode = gr.State(value="mic")
+    gr.HTML("""
+    <div class="vc-footer">
+      <a href="https://github.com/coqui-ai/TTS" target="_blank">Coqui XTTS v2</a>
+      &nbsp;&middot;&nbsp; Runs locally &mdash; nothing is uploaded
+    </div>
+    """)
 
-    gr.HTML(FOOTER_HTML)
-
-    # ── Event bindings ─────────────────────────────────────────────────────
-    tab_mic.select(fn=set_mode_mic, inputs=[], outputs=[active_mode])
-    tab_file.select(fn=set_mode_file, inputs=[], outputs=[active_mode])
-
+    # ── Event bindings ─────────────────────────────────────────────────────────
     script_text.change(fn=update_char_info, inputs=[script_text], outputs=[char_info])
     mic_audio.change(fn=show_quality, inputs=[mic_audio], outputs=[quality_card])
     file_upload.change(fn=show_quality, inputs=[file_upload], outputs=[quality_card])
 
     gen_btn.click(
         fn=run_unified,
-        inputs=[active_mode, mic_audio, file_upload, isolate_chk, script_text, lang_select],
+        inputs=[mic_audio, file_upload, isolate_chk, script_text, lang_select],
         outputs=[audio_out, status_box, stats_html],
     )
 

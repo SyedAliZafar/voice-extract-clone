@@ -5,6 +5,7 @@ requires-python = ">=3.9, <3.12"
 dependencies = [
     "TTS>=0.13.0",
     "demucs",
+    "flask",
     "gradio",
     "transformers==4.36.2",
     "torch==2.4.0",

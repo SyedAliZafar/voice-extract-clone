@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en" data-state="idle">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ExtractVoice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.30.0/tabler-icons.min.css">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#0a0a0b;
+  --s1:#111113;
+  --s2:#1a1a1c;
+  --s3:#222225;
+  --bd:#2a2a2d;
+  --tp:#e8e8ea;
+  --ts:#666669;
+  --ac:#c8f060;
+  --ok:#6af0c0;
+  --er:#f06060;
+  --ff:'Syne',sans-serif;
+  --fm:'DM Mono',monospace;
+  --r:6px;
+}
+
+html,body{background:var(--bg);color:var(--tp);font-family:var(--ff);min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* ── HEADER ── */
+header{
+  position:sticky;top:0;z-index:100;
+  background:var(--bg);border-bottom:1px solid var(--bd);
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;
+}
+.hd-left{display:flex;align-items:center;gap:10px}
+.logo{font-weight:800;font-size:15px;letter-spacing:-.03em;color:var(--tp)}
+.vbadge{
+  font-family:var(--fm);font-size:10px;color:var(--ts);
+  background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:2px 7px;
+}
+.hd-nav{display:flex;align-items:center;gap:2px}
+.nav-a{
+  font-family:var(--fm);font-size:11px;color:var(--ts);text-decoration:none;
+  padding:6px 10px;border-radius:4px;display:flex;align-items:center;gap:4px;
+  transition:color .15s,background .15s;
+}
+.nav-a:hover{color:var(--tp);background:var(--s2)}
+.nav-a i{font-size:12px}
+
+/* ── MAIN ── */
+main{max-width:760px;margin:0 auto;padding:40px 24px 80px;display:flex;flex-direction:column;gap:32px}
+
+/* ── SECTION LABEL ── */
+.lbl{
+  font-family:var(--fm);font-size:10px;font-weight:500;
+  letter-spacing:.12em;color:var(--ts);text-transform:uppercase;
+  display:block;margin-bottom:12px;
+}
+
+/* ── UPLOAD ── */
+.upload{
+  border:1.5px dashed var(--bd);border-radius:var(--r);
+  background:var(--s1);cursor:pointer;
+  transition:border-color .2s,background .2s;
+  min-height:160px;
+}
+.upload:hover{border-color:#3a3a3e}
+.upload.drag-over{border-color:var(--ac);background:var(--s2)}
+.upload.drag-over .up-icon{transform:scale(1.18);color:var(--ac)}
+
+.up-empty{
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;padding:40px 24px;
+  text-align:center;min-height:160px;
+}
+.up-icon{font-size:28px;color:var(--ts);transition:transform .2s,color .2s;display:block;line-height:1}
+.up-title{font-weight:600;font-size:14px;color:var(--tp)}
+.up-sub{font-family:var(--fm);font-size:11px;color:var(--ts);letter-spacing:.04em}
+
+.up-loaded{display:none;align-items:center;gap:16px;padding:20px 24px}
+.fl-icon{font-size:22px;color:var(--ac);flex-shrink:0}
+.fl-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.fl-name{font-family:var(--fm);font-size:13px;font-weight:500;color:var(--tp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fl-meta{font-family:var(--fm);font-size:11px;color:var(--ts)}
+.fl-badge{
+  font-family:var(--fm);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  padding:2px 8px;border-radius:3px;flex-shrink:0;white-space:nowrap;
+  background:rgba(200,240,96,.1);color:var(--ac);border:1px solid rgba(200,240,96,.2);
+}
+.rm-btn{
+  background:none;border:1px solid var(--bd);color:var(--ts);
+  width:28px;height:28px;border-radius:4px;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:13px;
+  transition:color .15s,border-color .15s,background .15s;
+}
+.rm-btn:hover{color:var(--er);border-color:var(--er);background:rgba(240,96,96,.06)}
+
+/* loaded/running/complete: swap views */
+[data-state="loaded"] .up-empty,
+[data-state="running"] .up-empty,
+[data-state="complete"] .up-empty{display:none}
+
+[data-state="loaded"] .up-loaded,
+[data-state="running"] .up-loaded,
+[data-state="complete"] .up-loaded{display:flex}
+
+[data-state="loaded"] .upload,
+[data-state="running"] .upload,
+[data-state="complete"] .upload{border-style:solid;cursor:default}
+
+[data-state="running"] .upload,[data-state="running"] .rm-btn{pointer-events:none;opacity:.65}
+
+/* ── MODE SELECTOR ── */
+.mode-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.mode-btn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:16px 8px;background:var(--s2);border:1px solid var(--bd);
+  border-radius:var(--r);cursor:pointer;color:var(--ts);
+  font-family:var(--ff);font-size:12px;font-weight:600;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.mode-btn i{font-size:20px;line-height:1}
+.mode-btn:hover{background:var(--s3);color:var(--tp);border-color:#3a3a3e}
+.mode-btn.active{background:var(--ac);border-color:var(--ac);color:#0a0a0b}
+[data-state="running"] .mode-btn{pointer-events:none;opacity:.45}
+
+/* ── SLIDER ── */
+.slider-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.slider-val{font-family:var(--fm);font-size:14px;font-weight:500;color:var(--ac)}
+
+input[type="range"]{
+  -webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;
+  background:linear-gradient(to right,var(--ac) 0%,var(--ac) var(--pct,85%),var(--s3) var(--pct,85%),var(--s3) 100%);
+  cursor:pointer;outline:none;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--bg);border:2px solid var(--ac);cursor:pointer;
+  transition:box-shadow .15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover{box-shadow:0 0 0 4px rgba(200,240,96,.14)}
+input[type="range"]::-moz-range-thumb{
+  width:16px;height:16px;border-radius:50%;background:var(--bg);border:2px solid var(--ac);border:none;
+}
+[data-state="running"] input[type="range"]{opacity:.45;pointer-events:none}
+
+/* ── PIPELINE ── */
+.pipeline{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden}
+.pl-hd{padding:12px 20px 11px;border-bottom:1px solid var(--bd)}
+
+.pl-step{
+  display:grid;grid-template-columns:24px 106px 1fr 82px;
+  align-items:center;gap:16px;padding:16px 20px;
+  border-bottom:1px solid var(--bd);transition:background .25s;
+}
+.pl-step:last-child{border-bottom:none}
+.pl-step.active{background:rgba(200,240,96,.025)}
+.pl-step.done{background:rgba(106,240,192,.02)}
+
+.pl-num{font-family:var(--fm);font-size:11px;color:var(--ts)}
+.pl-name{font-family:var(--fm);font-size:11px;font-weight:500;letter-spacing:.08em;color:var(--tp);text-transform:uppercase}
+.pl-bar{height:3px;background:var(--s3);border-radius:2px;overflow:hidden}
+.pl-fill{height:100%;width:0%;border-radius:2px;background:var(--ac);transition:background .4s}
+.pl-step.done .pl-fill{background:var(--ok)}
+
+.pl-badge{
+  font-family:var(--fm);font-size:9px;font-weight:500;letter-spacing:.1em;
+  text-transform:uppercase;padding:3px 8px;border-radius:3px;
+  background:var(--s3);color:var(--ts);white-space:nowrap;text-align:center;
+}
+.pl-badge.processing{background:rgba(200,240,96,.1);color:var(--ac);animation:blink 1s ease-in-out infinite}
+.pl-badge.complete{background:rgba(106,240,192,.1);color:var(--ok)}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── RESULT CARD ── */
+.result{
+  background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;
+  opacity:0;transform:translateY(12px);
+  transition:opacity .45s ease,transform .45s ease;
+  pointer-events:none;
+}
+.result.visible{opacity:1;transform:translateY(0);pointer-events:all}
+
+.res-hd{
+  display:flex;align-items:center;gap:8px;
+  padding:14px 20px;border-bottom:1px solid var(--bd);
+  font-family:var(--fm);font-size:11px;letter-spacing:.08em;color:var(--ok);
+}
+.res-hd i{font-size:15px}
+
+#waveCanvas{display:block;width:100%;height:80px;background:var(--s1)}
+
+.res-ft{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 20px;border-top:1px solid var(--bd);gap:16px;
+}
+.res-meta{
+  display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;
+  font-family:var(--fm);font-size:11px;color:var(--ts);
+}
+.res-meta .rn{color:var(--tp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res-meta .sep{color:var(--bd);flex-shrink:0}
+.dl-btn{
+  display:flex;align-items:center;gap:6px;padding:8px 16px;
+  background:none;border:1px solid var(--ok);border-radius:var(--r);
+  color:var(--ok);font-family:var(--fm);font-size:11px;font-weight:500;
+  letter-spacing:.05em;cursor:pointer;white-space:nowrap;flex-shrink:0;
+  transition:background .15s,color .15s;
+}
+.dl-btn:hover{background:var(--ok);color:#0a0a0b}
+.dl-btn i{font-size:13px}
+
+/* ── RUN BUTTON ── */
+.run-btn{
+  width:100%;height:48px;background:var(--ac);border:1px solid transparent;
+  border-radius:var(--r);color:#0a0a0b;font-family:var(--ff);font-weight:700;
+  font-size:13px;letter-spacing:.06em;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.run-btn:hover:not(:disabled){background:#d4f470}
+.run-btn:active:not(:disabled){background:#bde050}
+.run-btn:disabled{background:var(--s3);color:var(--ts);cursor:not-allowed;border-color:transparent}
+[data-state="running"] .run-btn{background:var(--s3);color:var(--ts);cursor:not-allowed}
+[data-state="complete"] .run-btn{background:none;border-color:var(--ok);color:var(--ok)}
+[data-state="complete"] .run-btn:hover{background:var(--ok);color:#0a0a0b}
+
+.spinner{
+  width:14px;height:14px;border-radius:50%;
+  border:2px solid rgba(150,150,150,.25);border-top-color:var(--ts);
+  animation:spin .7s linear infinite;display:none;flex-shrink:0;
+}
+[data-state="running"] .spinner{display:block}
+[data-state="running"] .run-icon{display:none}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── RESPONSIVE ── */
+@media(max-width:600px){
+  main{padding:24px 16px 60px;gap:24px}
+  .mode-grid{grid-template-columns:repeat(2,1fr)}
+  .pl-step{grid-template-columns:20px 78px 1fr 70px;gap:10px;padding:14px 14px}
+  header{padding:0 16px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hd-left">
+    <span class="logo">ExtractVoice</span>
+    <span class="vbadge">v1.0.0</span>
+  </div>
+  <nav class="hd-nav">
+    <a href="#" class="nav-a">Docs</a>
+    <a href="#" class="nav-a">GitHub <i class="ti ti-external-link"></i></a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- Upload Zone -->
+  <div>
+    <div class="upload" id="uploadZone">
+      <div class="up-empty">
+        <i class="ti ti-cloud-upload up-icon"></i>
+        <p class="up-title">Drop your file here</p>
+        <p class="up-sub" id="uploadSub">or click to browse &mdash; MP4 &middot; WAV &middot; MP3 &middot; FLAC</p>
+      </div>
+      <div class="up-loaded" id="upLoaded">
+        <i class="ti ti-file-music fl-icon"></i>
+        <div class="fl-info">
+          <span class="fl-name" id="flName"></span>
+          <span class="fl-meta" id="flMeta"></span>
+        </div>
+        <span class="fl-badge">Ready</span>
+        <button class="rm-btn" id="rmBtn" title="Remove file"><i class="ti ti-x"></i></button>
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept="audio/*,video/mp4,.mp4,.wav,.mp3,.flac" style="display:none">
+  </div>
+
+  <!-- Extraction Mode -->
+  <div>
+    <span class="lbl">Extraction Mode</span>
+    <div class="mode-grid">
+      <button class="mode-btn active" data-mode="vocals">
+        <i class="ti ti-microphone"></i>Vocals
+      </button>
+      <button class="mode-btn" data-mode="full">
+        <i class="ti ti-music"></i>Full Audio
+      </button>
+      <button class="mode-btn" data-mode="mic">
+        <i class="ti ti-headphones"></i>Mic Input
+      </button>
+      <button class="mode-btn" data-mode="stems">
+        <i class="ti ti-layers"></i>Stems
+      </button>
+    </div>
+  </div>
+
+  <!-- Isolation Strength -->
+  <div>
+    <div class="slider-row">
+      <span class="lbl" style="margin-bottom:0">Isolation Strength</span>
+      <span class="slider-val" id="sliderVal">85%</span>
+    </div>
+    <input type="range" id="isoSlider" min="0" max="100" value="85">
+  </div>
+
+  <!-- Pipeline -->
+  <div class="pipeline">
+    <div class="pl-hd">
+      <span class="lbl" style="margin-bottom:0">Pipeline</span>
+    </div>
+    <div class="pl-step" id="step1">
+      <span class="pl-num">01</span>
+      <span class="pl-name">Extract</span>
+      <div class="pl-bar"><div class="pl-fill" id="fill1"></div></div>
+      <span class="pl-badge" id="badge1">Queued</span>
+    </div>
+    <div class="pl-step" id="step2">
+      <span class="pl-num">02</span>
+      <span class="pl-name">Isolate</span>
+      <div class="pl-bar"><div class="pl-fill" id="fill2"></div></div>
+      <span class="pl-badge" id="badge2">Queued</span>
+    </div>
+    <div class="pl-step" id="step3">
+      <span class="pl-num">03</span>
+      <span class="pl-name">Synthesize</span>
+      <div class="pl-bar"><div class="pl-fill" id="fill3"></div></div>
+      <span class="pl-badge" id="badge3">Queued</span>
+    </div>
+  </div>
+
+  <!-- Result Card -->
+  <div class="result" id="resultCard">
+    <div class="res-hd">
+      <i class="ti ti-circle-check"></i>
+      Extraction complete
+    </div>
+    <canvas id="waveCanvas"></canvas>
+    <div class="res-ft">
+      <div class="res-meta">
+        <span class="rn" id="resName">vocals_isolated.wav</span>
+        <span class="sep">&middot;</span>
+        <span>24 kHz</span>
+        <span class="sep">&middot;</span>
+        <span id="resSize">2.4 MB</span>
+      </div>
+      <button class="dl-btn"><i class="ti ti-download"></i>Download WAV</button>
+    </div>
+  </div>
+
+  <!-- Run Button -->
+  <button class="run-btn" id="runBtn" disabled>
+    <div class="spinner"></div>
+    <i class="ti ti-player-play run-icon"></i>
+    <span id="runLabel">Run Extraction</span>
+  </button>
+
+</main>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let state = 'idle';
+let currentFile = null;
+let uploadUid = null;  // set after /upload succeeds; null = demo mode
+
+const root       = document.documentElement;
+const uploadZone = document.getElementById('uploadZone');
+const fileInput  = document.getElementById('fileInput');
+const runBtn     = document.getElementById('runBtn');
+const runLabel   = document.getElementById('runLabel');
+const resultCard = document.getElementById('resultCard');
+const uploadSub  = document.getElementById('uploadSub');
+
+function setState(s) {
+  state = s;
+  root.setAttribute('data-state', s);
+  if (s === 'idle') {
+    runBtn.disabled = true;
+    runLabel.textContent = 'Run Extraction';
+    resetPipeline();
+    resultCard.classList.remove('visible');
+  } else if (s === 'loaded') {
+    runBtn.disabled = false;
+    runLabel.textContent = 'Run Extraction';
+  } else if (s === 'running') {
+    runBtn.disabled = true;
+    runLabel.textContent = 'Extracting…';
+  } else if (s === 'complete') {
+    runBtn.disabled = false;
+    runLabel.textContent = 'Done — Run Again';
+  }
+}
+
+// ── Upload Zone ────────────────────────────────────────────────────────
+uploadZone.addEventListener('click', () => {
+  if (state === 'idle') fileInput.click();
+});
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+uploadZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  if (state === 'idle') {
+    uploadZone.classList.add('drag-over');
+    uploadSub.textContent = 'Release to upload';
+  }
+});
+
+uploadZone.addEventListener('dragleave', e => {
+  if (!uploadZone.contains(e.relatedTarget)) {
+    uploadZone.classList.remove('drag-over');
+    uploadSub.textContent = 'or click to browse — MP4 · WAV · MP3 · FLAC';
+  }
+});
+
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  uploadSub.textContent = 'or click to browse — MP4 · WAV · MP3 · FLAC';
+  if (state === 'idle' && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function loadFile(file) {
+  currentFile = file;
+  uploadUid = null;
+  const mb  = (file.size / 1048576).toFixed(1);
+  const ext = file.name.split('.').pop().toUpperCase();
+  document.getElementById('flName').textContent = file.name;
+  document.getElementById('flMeta').textContent = mb + ' MB · ' + ext;
+  setState('loaded');
+
+  // Background upload to server; sets uploadUid for real processing.
+  // If server is offline, falls back to demo animation automatically.
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/upload', { method: 'POST', body: fd })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(d => { uploadUid = d.uid; })
+    .catch(() => { uploadUid = null; });
+}
+
+document.getElementById('rmBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  currentFile = null;
+  uploadUid = null;
+  fileInput.value = '';
+  setState('idle');
+});
+
+// ── Mode Selector ──────────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+// ── Slider ─────────────────────────────────────────────────────────────
+const isoSlider = document.getElementById('isoSlider');
+const sliderVal = document.getElementById('sliderVal');
+
+function syncSlider() {
+  const v = isoSlider.value;
+  sliderVal.textContent = v + '%';
+  isoSlider.style.setProperty('--pct', v + '%');
+}
+isoSlider.addEventListener('input', syncSlider);
+syncSlider();
+
+// ── Pipeline helpers ───────────────────────────────────────────────────
+function resetPipeline() {
+  [1, 2, 3].forEach(i => {
+    const fill = document.getElementById('fill' + i);
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    const badge = document.getElementById('badge' + i);
+    badge.textContent = 'Queued';
+    badge.className = 'pl-badge';
+    document.getElementById('step' + i).className = 'pl-step';
+  });
+  clearPipelineError();
+}
+
+// Demo mode: deterministic frame-rate animation
+function animateStep(i, duration) {
+  return new Promise(resolve => {
+    const fill  = document.getElementById('fill'  + i);
+    const badge = document.getElementById('badge' + i);
+    const step  = document.getElementById('step'  + i);
+    badge.textContent = 'Processing'; badge.className = 'pl-badge processing';
+    step.className = 'pl-step active';
+    fill.style.transition = 'none';
+    let progress = 0;
+    const TICK = 1000 / 60, inc = 100 / (duration / TICK);
+    const timer = setInterval(() => {
+      progress = Math.min(progress + inc, 100);
+      fill.style.width = progress.toFixed(2) + '%';
+      if (progress >= 100) {
+        clearInterval(timer);
+        badge.textContent = 'Complete'; badge.className = 'pl-badge complete';
+        step.className = 'pl-step done'; resolve();
+      }
+    }, TICK);
+  });
+}
+
+// Real mode: indeterminate crawl -> snap to 100% on server event
+function startStepProcessing(i) {
+  const fill  = document.getElementById('fill'  + i);
+  const badge = document.getElementById('badge' + i);
+  const step  = document.getElementById('step'  + i);
+  badge.textContent = 'Processing'; badge.className = 'pl-badge processing';
+  step.className = 'pl-step active';
+  fill.style.transition = 'width 4s ease-out';
+  requestAnimationFrame(() => { fill.style.width = '74%'; });
+}
+
+function completeStep(i) {
+  const fill  = document.getElementById('fill'  + i);
+  const badge = document.getElementById('badge' + i);
+  const step  = document.getElementById('step'  + i);
+  fill.style.transition = 'width .35s ease';
+  fill.style.width = '100%';
+  badge.textContent = 'Complete'; badge.className = 'pl-badge complete';
+  step.className = 'pl-step done';
+}
+
+// ── Error banner ───────────────────────────────────────────────────────
+function showPipelineError(msg) {
+  clearPipelineError();
+  const div = document.createElement('div');
+  div.id = 'pipeErr';
+  div.style.cssText = 'font-family:var(--fm);font-size:11px;color:var(--er);padding:12px 20px;border-top:1px solid var(--bd)';
+  div.textContent = msg;
+  document.querySelector('.pipeline').appendChild(div);
+}
+function clearPipelineError() { document.getElementById('pipeErr')?.remove(); }
+
+// ── Shared finish ──────────────────────────────────────────────────────
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+async function finishRun(sizeBytes) {
+  const fname = currentFile
+    ? currentFile.name.replace(/\.[^/.]+$/, '') + '_vocals.wav'
+    : 'vocals_isolated.wav';
+  document.getElementById('resName').textContent = fname;
+  if (sizeBytes) document.getElementById('resSize').textContent = (sizeBytes / 1048576).toFixed(1) + ' MB';
+  drawWaveform();
+  await delay(220);
+  resultCard.classList.add('visible');
+  setState('complete');
+}
+
+// ── Run (real — SSE from server.py) ───────────────────────────────────
+function runReal() {
+  const mode = document.querySelector('.mode-btn.active')?.dataset.mode || 'vocals';
+  const str  = document.getElementById('isoSlider').value;
+
+  return new Promise((resolve, reject) => {
+    const es = new EventSource('/run?uid=' + uploadUid + '&mode=' + mode + '&strength=' + str);
+
+    es.onmessage = async e => {
+      let d; try { d = JSON.parse(e.data); } catch { return; }
+
+      if (d.error) {
+        es.close();
+        showPipelineError(d.error);
+        setState('loaded');
+        reject(new Error(d.error));
+        return;
+      }
+
+      const { step, status, size } = d;
+      if (!step || !status) return;
+
+      if (status === 'processing') {
+        startStepProcessing(step);
+      } else if (status === 'complete') {
+        completeStep(step);
+        if (step === 3) {
+          es.close();
+          document.querySelector('.dl-btn').onclick = () => { window.location.href = '/download'; };
+          await finishRun(size);
+          resolve();
+        }
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      showPipelineError('Lost connection — is server.py running?');
+      setState('loaded');
+      reject(new Error('SSE error'));
+    };
+  });
+}
+
+// ── Run (demo — no server, fake timers) ───────────────────────────────
+async function runDemo() {
+  await animateStep(1, 1800);
+  await delay(180);
+  await animateStep(2, 2600);
+  await delay(180);
+  await animateStep(3, 3200);
+  await finishRun(currentFile ? currentFile.size * 0.58 : null);
+}
+
+// ── Run button ─────────────────────────────────────────────────────────
+runBtn.addEventListener('click', async () => {
+  if (state !== 'loaded' && state !== 'complete') return;
+
+  const wasComplete = (state === 'complete');
+  resultCard.classList.remove('visible');
+  resetPipeline();
+  setState('running');
+  if (wasComplete) await delay(360);
+
+  try {
+    await (uploadUid ? runReal() : runDemo());
+  } catch { /* errors handled inside runReal */ }
+});
+
+// ── Waveform Canvas ────────────────────────────────────────────────────
+function seededRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = Math.imul(s, 1664525) + 1013904223 >>> 0; return s / 0xffffffff; };
+}
+
+function drawWaveform() {
+  const canvas = document.getElementById('waveCanvas');
+  const W = canvas.offsetWidth || 720, H = canvas.offsetHeight || 80;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
+  const rng = seededRng(0xc0ffee), bars = 120;
+  const bw = W / bars, gap = 1.5, cy = H / 2, maxH = cy * 0.88;
+  for (let i = 0; i < bars; i++) {
+    const t = i / (bars - 1);
+    const env = t < 0.06 ? t / 0.06 : t > 0.88 ? (1 - t) / 0.12 : 1;
+    const h = (rng() * 0.65 + 0.35) * env * ((rng() > 0.88) ? 0.4 : 1) * maxH;
+    const x = i * bw + gap / 2, w = bw - gap;
+    ctx.globalAlpha = 0.88; ctx.fillStyle = '#6af0c0'; ctx.fillRect(x, cy - h, w, h);
+    ctx.globalAlpha = 0.28; ctx.fillRect(x, cy + 1, w, h * 0.55);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+setState('idle');
+</script>
+</body>
+</html>
